@@ -69,10 +69,15 @@ void GameServer::loop() {
 
     for (uint8_t i = 0; i < Config::MAX_ROOMS; i++) {
         GameRoom &room = rooms_[i];
-        if (room.active && room.gameStarted &&
-            (now - room.lastTick >= Config::TICK_INTERVAL_MS)) {
-            room.lastTick = now;
-            updateRoomTick(i, now);
+        if (room.active && room.gameStarted) {
+            if (now - room.lastTick >= Config::TICK_INTERVAL_MS) {
+                room.lastTick = now;
+                updateRoomTick(i, now);
+            }
+            if (now - room.lastObstacleUpdate >= Config::OBSTACLE_UPDATE_INTERVAL_MS) {
+                room.lastObstacleUpdate = now;
+                updateObstacles(i, now);
+            }
         }
     }
 
@@ -513,7 +518,7 @@ void GameServer::updateRoomTick(uint8_t roomIndex, unsigned long now) {
 
         TileType tile = static_cast<TileType>(room.map[ny][nx]);
         if (tile == TileType::Wall) continue;              // 벽: 아무도 통과 불가
-        if (tile == TileType::Obstacle && !p.isTagger) continue; // 장애물: 도망자는 통과 불가 (술래는 가능)
+        if (tile == TileType::Obstacle) continue;          // 장애물: 아무도 통과 불가
 
         targetX[i] = static_cast<int8_t>(nx);
         targetY[i] = static_cast<int8_t>(ny);
@@ -582,6 +587,68 @@ void GameServer::updateRoomTick(uint8_t roomIndex, unsigned long now) {
     // 6단계: 최신 상태 전송. 맵은 참가 시 이미 전달했고 게임 중에는 바뀌지 않으므로
     // 매 틱마다 다시 보내지 않는다 (대역폭 절약).
     broadcastState(roomIndex, false);
+}
+
+// =====================================================================
+// 장애물 동적 변경: 기존 장애물 일부 제거 + 빈 곳에 새로 배치
+// 플레이어가 있는 칸에는 장애물을 놓지도 제거하지도 않는다.
+// =====================================================================
+void GameServer::updateObstacles(uint8_t roomIndex, unsigned long now) {
+    GameRoom &room = rooms_[roomIndex];
+
+    // 1. 현재 장애물 위치와 개수를 수집한다.
+    struct Pos { uint8_t x; uint8_t y; };
+    Pos obstacles[Config::MAP_WIDTH * Config::MAP_HEIGHT];
+    uint8_t obstacleCount = 0;
+
+    for (uint8_t y = 1; y < Config::MAP_HEIGHT - 1; y++) {
+        for (uint8_t x = 1; x < Config::MAP_WIDTH - 1; x++) {
+            if (room.map[y][x] == static_cast<uint8_t>(TileType::Obstacle)) {
+                obstacles[obstacleCount++] = {x, y};
+            }
+        }
+    }
+
+    // 2. 장애물 일부 제거 (플레이어가 없는 곳에서만, 최소 개수 유지)
+    uint8_t removed = 0;
+    for (uint8_t attempt = 0; attempt < 20 && removed < Config::OBSTACLE_CHANGE_COUNT; attempt++) {
+        if (obstacleCount <= Config::OBSTACLE_MIN_COUNT) break;
+        uint8_t pick = esp_random() % obstacleCount;
+        uint8_t ox = obstacles[pick].x;
+        uint8_t oy = obstacles[pick].y;
+
+        // 플레이어가 인접해있으면 제거하지 않는다 (갑자기 길이 뚫리면 안 되므로)
+        if (!isPositionOccupied(room, static_cast<int8_t>(ox), static_cast<int8_t>(oy))) {
+            room.map[oy][ox] = static_cast<uint8_t>(TileType::Empty);
+            // 배열에서 제거 (마지막 요소와 교체)
+            obstacles[pick] = obstacles[obstacleCount - 1];
+            obstacleCount--;
+            removed++;
+        }
+    }
+
+    // 3. 새로운 장애물 배치 (빈 칸이면서 플레이어가 없는 곳)
+    uint8_t added = 0;
+    for (uint8_t attempt = 0; attempt < 40 && added < Config::OBSTACLE_CHANGE_COUNT; attempt++) {
+        if (obstacleCount >= Config::OBSTACLE_MAX_COUNT) break;
+        // 테두리(벽)를 제외한 내부 영역에서 랜덤 좌표 선택
+        uint8_t rx = 1 + (esp_random() % (Config::MAP_WIDTH - 2));
+        uint8_t ry = 1 + (esp_random() % (Config::MAP_HEIGHT - 2));
+
+        if (room.map[ry][rx] != static_cast<uint8_t>(TileType::Empty)) continue;
+        if (isPositionOccupied(room, static_cast<int8_t>(rx), static_cast<int8_t>(ry))) continue;
+
+        room.map[ry][rx] = static_cast<uint8_t>(TileType::Obstacle);
+        obstacles[obstacleCount++] = {rx, ry};
+        added++;
+    }
+
+    // 4. 변경이 있었다면 맵 포함 상태를 모든 클라이언트에게 전송
+    if (removed > 0 || added > 0) {
+        Serial.printf("[GAME] 장애물 변경: 채널=%s, 제거=%d, 추가=%d, 현재=%d\n",
+                      room.channel, removed, added, obstacleCount);
+        broadcastState(roomIndex, true); // 맵 포함 전송
+    }
 }
 
 // =====================================================================
@@ -714,6 +781,7 @@ int8_t GameServer::allocRoom(const char *channel) {
             room.taggerIndex = 0xFF;
             room.lastTick = millis();
             room.lastActivity = millis();
+            room.lastObstacleUpdate = millis();
             initRoomMap(room);
             return static_cast<int8_t>(i);
         }
@@ -757,28 +825,15 @@ bool GameServer::isPositionOccupied(const GameRoom &room, int8_t x, int8_t y) co
 // =====================================================================
 void GameServer::sendJsonTo(AsyncWebSocketClient *client, JsonDocument &doc) {
     if (client == nullptr) return;
-    size_t len = measureJson(doc);
-    AsyncWebSocketMessageBuffer *buffer = ws_.makeBuffer(len);
-    if (buffer == nullptr) {
-        Serial.println("[ERROR] 메시지 버퍼 할당 실패 (메모리 부족)");
-        return;
-    }
-    serializeJson(doc, reinterpret_cast<char *>(buffer->get()), len + 1);
-    client->text(buffer);
+    String out;
+    serializeJson(doc, out);
+    client->text(out);
 }
 
 void GameServer::broadcastJson(uint8_t roomIndex, JsonDocument &doc, uint32_t excludeClientId) {
-    size_t len = measureJson(doc);
-    AsyncWebSocketMessageBuffer *buffer = ws_.makeBuffer(len);
-    if (buffer == nullptr) {
-        Serial.println("[ERROR] 메시지 버퍼 할당 실패 (메모리 부족)");
-        return;
-    }
-    serializeJson(doc, reinterpret_cast<char *>(buffer->get()), len + 1);
+    String out;
+    serializeJson(doc, out);
 
-    // 같은 버퍼(참조 카운트 방식)를 여러 클라이언트에게 재사용해서, 메시지마다
-    // 다시 직렬화하지 않도록 한다. 반드시 "같은 채널에 속한 연결"에게만 보낸다
-    // (채널 격리: A 채널 메시지가 B 채널로 새어나가지 않도록 하는 핵심 부분).
     for (uint8_t i = 0; i < Config::MAX_CONNECTIONS; i++) {
         ConnectionInfo &conn = connections_[i];
         if (!conn.active || conn.roomIndex != roomIndex) continue;
@@ -786,7 +841,7 @@ void GameServer::broadcastJson(uint8_t roomIndex, JsonDocument &doc, uint32_t ex
 
         AsyncWebSocketClient *client = ws_.client(conn.clientId);
         if (client != nullptr && client->status() == WS_CONNECTED) {
-            client->text(buffer);
+            client->text(out);
         }
     }
 }
@@ -815,10 +870,8 @@ void GameServer::broadcastState(uint8_t roomIndex, bool includeMap, uint32_t exc
 
 // state 메시지를 만든다.
 // [맵 전송 정책]
-// 맵은 방이 생성될 때 한 번 만들어지면 게임 중에 절대 바뀌지 않는다.
-// 따라서 "참가 직후 1회"만 맵 전체를 보내고, 그 이후(회전/이동/게임 시작 등)에는
-// 플레이어 정보만 담아 보낸다. 이렇게 하면 144칸짜리 맵 배열을 400ms마다
-// 반복 전송하지 않아도 되어 WebSocket 대역폭과 ESP32 CPU 사용량을 크게 아낄 수 있다.
+// 맵은 참가 직후 1회, 그리고 장애물 동적 변경 시에만 맵 데이터를 포함해 보낸다.
+// 일반 틱(이동/회전)에서는 플레이어 정보만 담아 대역폭을 절약한다.
 void GameServer::buildStateJson(JsonDocument &doc, GameRoom &room, bool includeMap) {
     doc["type"] = WsMsgType::STATE;
     doc["channel"] = room.channel;

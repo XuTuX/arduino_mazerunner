@@ -70,6 +70,7 @@ private:
 
     // ---- 게임 틱(자동 이동) ----
     void updateRoomTick(uint8_t roomIndex, unsigned long now);
+    void updateObstacles(uint8_t roomIndex, unsigned long now);
 
     // ---- 방/플레이어 정리 ----
     void cleanupRooms(unsigned long now);

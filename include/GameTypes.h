@@ -51,6 +51,7 @@ struct GameRoom {
     uint8_t map[Config::MAP_HEIGHT][Config::MAP_WIDTH]; // TileType 값을 uint8_t로 저장
     unsigned long lastTick;     // 마지막 자동 이동 처리 시각(millis)
     unsigned long lastActivity; // 마지막으로 누군가 있었던 시각(millis) - 빈 방 정리용
+    unsigned long lastObstacleUpdate; // 마지막 장애물 동적 변경 시각(millis)
 };
 
 // WebSocket 연결 하나(휴대폰 1대 또는 컴퓨터 화면 1개)에 대한 정보.

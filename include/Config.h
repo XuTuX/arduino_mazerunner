@@ -58,6 +58,14 @@ constexpr unsigned long ROOM_IDLE_TIMEOUT_MS = 300000; // 채널이 완전히 �
 constexpr unsigned long CLEANUP_INTERVAL_MS = 5000;  // 정리 작업을 확인하는 주기
 
 // ---------------------------------------------------------------
+// 장애물 동적 변경 (게임 진행 중 장애물이 랜덤으로 생겼다/사라짐)
+// ---------------------------------------------------------------
+constexpr unsigned long OBSTACLE_UPDATE_INTERVAL_MS = 5000; // 장애물 갱신 주기 (5초)
+constexpr uint8_t OBSTACLE_MIN_COUNT = 4;   // 맵에 최소한 유지되는 장애물 수
+constexpr uint8_t OBSTACLE_MAX_COUNT = 10;  // 맵에 최대로 존재할 수 있는 장애물 수
+constexpr uint8_t OBSTACLE_CHANGE_COUNT = 2; // 한 번에 추가/제거하는 장애물 수
+
+// ---------------------------------------------------------------
 // 네트워크 메시지 크기
 // ---------------------------------------------------------------
 constexpr size_t WS_MAX_MESSAGE_LEN = 512; // 클라이언트가 보낼 수 있는 메시지 최대 길이(바이트)

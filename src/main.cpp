@@ -35,7 +35,18 @@ void setup() {
         Serial.println("[ERROR] LittleFS 마운트 실패! data 폴더를 업로드했는지 확인하세요.");
         Serial.println("[ERROR] VS Code에서 PlatformIO: Upload Filesystem Image 를 실행해주세요.");
     } else {
-        Serial.println("[INFO] LittleFS 마운트 성공");
+        Serial.println("[INFO] LittleFS 마운트 성공. 저장된 파일 목록:");
+        File root = LittleFS.open("/");
+        File file = root.openNextFile();
+        if (!file) Serial.println("  (파일이 하나도 없습니다! 비어있음)");
+        while (file) {
+            Serial.print("  - ");
+            Serial.print(file.name());
+            Serial.print(" (");
+            Serial.print(file.size());
+            Serial.println(" bytes)");
+            file = root.openNextFile();
+        }
     }
 
     WiFi.mode(WIFI_AP);
