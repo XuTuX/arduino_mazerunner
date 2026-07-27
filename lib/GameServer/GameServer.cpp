@@ -584,8 +584,9 @@ void GameServer::updateRoomTick(uint8_t roomIndex, unsigned long now) {
         }
     }
 
-    // 6단계: 최신 상태 전송. 맵은 참가 시 이미 전달했고 게임 중에는 바뀌지 않으므로
-    // 매 틱마다 다시 보내지 않는다 (대역폭 절약).
+    // 6단계: 최신 상태 전송. 맵은 참가 시 1회 전달하고, 이후에는 장애물이 실제로
+    // 바뀌었을 때만 updateObstacles()가 따로 보낸다. 매 틱마다 144칸을 다시 보내는
+    // 것은 낭비이므로 여기서는 플레이어 정보만 보낸다 (대역폭 절약).
     broadcastState(roomIndex, false);
 }
 
@@ -617,7 +618,9 @@ void GameServer::updateObstacles(uint8_t roomIndex, unsigned long now) {
         uint8_t ox = obstacles[pick].x;
         uint8_t oy = obstacles[pick].y;
 
-        // 플레이어가 인접해있으면 제거하지 않는다 (갑자기 길이 뚫리면 안 되므로)
+        // 그 칸에 플레이어가 서 있으면 건드리지 않는다.
+        // (참고: 플레이어는 장애물 칸에 있을 수 없으므로 이 검사는 현재 항상 참이다.
+        //  나중에 "장애물 통과 아이템" 같은 것이 생겼을 때를 대비한 방어적 검사로 남겨둔다.)
         if (!isPositionOccupied(room, static_cast<int8_t>(ox), static_cast<int8_t>(oy))) {
             room.map[oy][ox] = static_cast<uint8_t>(TileType::Empty);
             // 배열에서 제거 (마지막 요소와 교체)
