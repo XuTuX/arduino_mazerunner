@@ -1,0 +1,421 @@
+/* =====================================================================
+   style.css
+   index.html / controller.html / display.html 공통 스타일.
+   외부 폰트/CDN 없이 시스템 기본 폰트만 사용한다 (인터넷 없이 동작).
+   그라데이션, 그림자, 아이콘 없이 - 색과 여백만으로 정리한 플랫(flat) 디자인.
+   ===================================================================== */
+
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+
+  --radius: 8px;
+
+  --color-primary: #26282c;
+  --color-danger: #ef4444;
+  --color-success: #22c55e;
+  --color-warning: #eab308;
+}
+
+/* 세 화면 전부 같은 밝은 톤을 쓴다 (어두운 테마 없음) */
+.page-index,
+.page-controller,
+.page-display {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --text: #16181d;
+  --text-muted: #6b7280;
+  --border: #e2e4e9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: var(--font-sans);
+  touch-action: manipulation; /* 더블탭 확대 방지 */
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+h1, h2, p {
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------
+   공용 버튼 / 폼 요소
+   --------------------------------------------------------------- */
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.btn {
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 13px 16px;
+  font-size: 15px;
+  font-weight: 600;
+  width: 100%;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.btn-primary:active {
+  background: #101214;
+}
+
+.btn-secondary {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.btn-secondary:active {
+  background: var(--border);
+}
+
+.form-error {
+  color: var(--color-danger);
+  font-size: 13px;
+  margin-top: var(--space-3);
+}
+
+/* ---------------------------------------------------------------
+   index.html - 접속 화면
+   --------------------------------------------------------------- */
+.page-index {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: var(--space-5);
+}
+
+.index-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-5);
+  max-width: 360px;
+  width: 100%;
+}
+
+.index-card h1 {
+  font-size: 20px;
+}
+
+.index-card .sub {
+  margin-top: var(--space-2);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.index-card label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.index-card input {
+  width: 100%;
+  padding: 11px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+}
+
+.index-card input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.button-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+/* ---------------------------------------------------------------
+   controller.html - 휴대폰 조작기 화면 (한 손 조작, 세로 화면 기준)
+   --------------------------------------------------------------- */
+.page-controller {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.controller-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: max(env(safe-area-inset-top), var(--space-4)) var(--space-4) max(env(safe-area-inset-bottom), var(--space-4));
+}
+
+.controller-header {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-4);
+  margin-top: var(--space-2);
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-3) 0;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.info-row:last-of-type {
+  border-bottom: none;
+}
+
+.info-label {
+  color: var(--text-muted);
+}
+
+.info-value {
+  font-weight: 600;
+}
+
+.role-tagger {
+  color: var(--color-danger);
+}
+
+.role-runner {
+  color: var(--text);
+}
+
+.conn-status {
+  text-align: center;
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.conn-connected {
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--color-success);
+}
+
+.conn-disconnected {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--color-danger);
+}
+
+.conn-reconnecting {
+  background: rgba(234, 179, 8, 0.12);
+  color: var(--color-warning);
+}
+
+.controller-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4) 0;
+}
+
+.direction-arrow {
+  font-size: 64px;
+  line-height: 1;
+}
+
+.direction-label {
+  font-size: 16px;
+  color: var(--text-muted);
+  margin-bottom: var(--space-4);
+}
+
+/* 회전 버튼: 화면 대부분을 차지할 만큼 크고, 누르기 쉬운 버튼 */
+.rotate-button {
+  width: 100%;
+  max-width: 300px;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-primary);
+  color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.rotate-button.pressed,
+.rotate-button:active {
+  background: #101214;
+}
+
+.rotate-icon {
+  font-size: 56px;
+  line-height: 1;
+}
+
+.rotate-text {
+  font-size: 15px;
+  font-weight: 600;
+  padding: 0 24px;
+  text-align: center;
+}
+
+.error-banner {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--color-danger);
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  text-align: center;
+  font-size: 13px;
+  margin-top: var(--space-2);
+}
+
+/* ---------------------------------------------------------------
+   display.html - 컴퓨터 게임 화면 (밝은 배경, 넓은 화면 기준)
+   --------------------------------------------------------------- */
+.page-display {
+  min-height: 100vh;
+}
+
+.display-wrap {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  padding: var(--space-5) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  overflow-y: auto;
+}
+
+.game-title {
+  font-size: 17px;
+  margin-bottom: var(--space-3);
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.stat-row span {
+  color: var(--text-muted);
+}
+
+.ws-connected {
+  color: var(--color-success);
+}
+
+.ws-disconnected {
+  color: var(--color-danger);
+}
+
+.ws-reconnecting {
+  color: var(--color-warning);
+}
+
+.start-button {
+  margin-top: var(--space-3);
+}
+
+.player-list-title {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.player-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  overflow-y: auto;
+}
+
+.player-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  padding: var(--space-2);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.player-item-tagger {
+  border-color: var(--color-danger);
+}
+
+.player-item-offline {
+  opacity: 0.5;
+}
+
+.player-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.canvas-area {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  overflow: hidden;
+}
+
+#gameCanvas {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: block;
+}
+
+/* 좁은 화면(모바일 가로 등)에서는 사이드바를 위로 올린다 */
+@media (max-width: 720px) {
+  .display-wrap {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}

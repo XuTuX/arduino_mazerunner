@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>격자 술래잡기</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body class="page-index">
+<main class="index-card">
+  <h1>격자 술래잡기</h1>
+  <p class="sub">같은 채널에 들어온 기기끼리만 함께 플레이합니다.</p>
+
+  <form id="joinForm">
+    <label for="channelInput">채널</label>
+    <input id="channelInput" type="text" maxlength="16" placeholder="예: A, TEST1" autocomplete="off" autocapitalize="characters">
+
+    <label for="nameInput">플레이어 이름 (휴대폰 조작기용)</label>
+    <input id="nameInput" type="text" maxlength="16" placeholder="비워두면 자동 생성" autocomplete="off">
+
+    <div class="button-group">
+      <button type="button" id="joinControllerBtn" class="btn btn-primary">휴대폰 조작기로 참가</button>
+      <button type="button" id="joinDisplayBtn" class="btn btn-secondary">컴퓨터 게임 화면으로 참가</button>
+    </div>
+
+    <p id="formError" class="form-error" hidden></p>
+  </form>
+</main>
+
+<script src="js/common.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var channelInput = document.getElementById('channelInput');
+  var nameInput = document.getElementById('nameInput');
+  var formError = document.getElementById('formError');
+
+  var lastChannel = TagGame.loadLastChannel();
+  if (lastChannel) channelInput.value = lastChannel;
+
+  function showError(msg) {
+    formError.textContent = msg;
+    formError.hidden = false;
+  }
+
+  // 이 프로토타입은 index.html -> controller.html / display.html 로
+  // "실제 페이지 이동"을 사용한다. 한 페이지 안에서 화면만 바꾸는 방식(SPA)도
+  // 가능하지만, 역할별로 파일을 분리해 각 화면의 JS 상태가 완전히 초기화되게 하는
+  // 쪽이 초보자가 이해하고 디버깅하기 훨씬 쉬워서 이 방식을 선택했다.
+  function goTo(page) {
+    var channel = channelInput.value.trim();
+    if (!TagGame.isValidChannelInput(channel)) {
+      showError('채널은 영문/숫자 1~16자로 입력해주세요.');
+      return;
+    }
+    formError.hidden = true;
+    TagGame.saveLastChannel(channel);
+
+    var params = new URLSearchParams();
+    params.set('channel', channel.toUpperCase());
+    if (page === 'controller.html') {
+      params.set('name', nameInput.value.trim());
+    }
+    window.location.href = page + '?' + params.toString();
+  }
+
+  document.getElementById('joinControllerBtn').addEventListener('click', function () {
+    goTo('controller.html');
+  });
+  document.getElementById('joinDisplayBtn').addEventListener('click', function () {
+    goTo('display.html');
+  });
+})();
+</script>
+</body>
+</html>

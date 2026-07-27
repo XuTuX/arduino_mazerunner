@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>게임 화면 - 격자 술래잡기</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body class="page-display">
+<div class="display-wrap">
+  <aside class="sidebar">
+    <h1 class="game-title">격자 술래잡기</h1>
+
+    <div class="stat-row"><span>채널</span><strong id="channelValue">-</strong></div>
+    <div class="stat-row"><span>접속자 수</span><strong id="playerCountValue">0</strong></div>
+    <div class="stat-row"><span>현재 술래</span><strong id="taggerValue">-</strong></div>
+    <div class="stat-row"><span>게임 상태</span><strong id="gameStateValue">대기 중</strong></div>
+    <div class="stat-row"><span>서버 연결</span><strong id="wsStatusValue" class="ws-disconnected">연결 중...</strong></div>
+
+    <button id="startBtn" class="btn btn-primary start-button" type="button">게임 시작</button>
+    <p id="errorBanner" class="form-error" hidden></p>
+
+    <h2 class="player-list-title">플레이어 목록</h2>
+    <ul id="playerList" class="player-list"></ul>
+  </aside>
+
+  <main class="canvas-area">
+    <canvas id="gameCanvas"></canvas>
+  </main>
+</div>
+
+<script src="js/common.js"></script>
+<script src="js/display.js"></script>
+</body>
+</html>

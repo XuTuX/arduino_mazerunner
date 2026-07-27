@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>휴대폰 조작기 - 격자 술래잡기</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body class="page-controller">
+<div class="controller-wrap">
+  <header class="controller-header">
+    <div class="info-row">
+      <span class="info-label">채널</span>
+      <span id="channelValue" class="info-value">-</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">이름</span>
+      <span id="nameValue" class="info-value">-</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">번호</span>
+      <span id="idValue" class="info-value">-</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">역할</span>
+      <span id="roleValue" class="info-value role-runner">도망자</span>
+    </div>
+    <div id="connStatus" class="conn-status conn-disconnected">연결 중...</div>
+  </header>
+
+  <main class="controller-main">
+    <div id="directionArrow" class="direction-arrow">↑</div>
+    <div id="directionLabel" class="direction-label">위</div>
+    <button id="rotateBtn" class="rotate-button" type="button">
+      <span class="rotate-icon">↻</span>
+      <span class="rotate-text">시계 방향 90도 회전</span>
+    </button>
+  </main>
+
+  <p id="errorBanner" class="error-banner" hidden></p>
+</div>
+
+<script src="js/common.js"></script>
+<script src="js/controller.js"></script>
+</body>
+</html>
