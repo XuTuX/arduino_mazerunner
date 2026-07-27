@@ -223,8 +223,29 @@ void GameServer::handleJoin(AsyncWebSocketClient *client, JsonObject obj) {
         return;
     }
 
-    // 같은 연결이 join을 다시 보낸 경우(중복 참가)를 대비해 기존 연결 정보를 정리한다.
-    freeConnection(client->id());
+    // 같은 연결이 join을 다시 보낸 경우(중복 참가, 다른 채널로 갈아타기)를 대비한다.
+    // 주의: 연결 정보만 지우면 이전 방의 플레이어가 connected=true인 채로 남는다.
+    // 그 플레이어는 (a) 조작할 사람이 없고 (b) cleanupRooms는 !connected만 지우므로
+    // 영원히 사라지지 않는 "유령"이 되어 슬롯을 계속 차지한다.
+    // 그래서 연결 정보를 지우기 전에 먼저 "끊긴 것"으로 처리해준다.
+    ConnectionInfo *prev = findConnection(client->id());
+    if (prev != nullptr && !prev->isDisplay && prev->roomIndex >= 0 && prev->playerIndex >= 0) {
+        GameRoom &prevRoom = rooms_[prev->roomIndex];
+        Player &prevPlayer = prevRoom.players[prev->playerIndex];
+        if (prevPlayer.active && prevPlayer.clientId == client->id()) {
+            prevPlayer.connected = false;
+            prevPlayer.clientId = 0;
+            prevPlayer.lastSeen = millis();
+            prevRoom.lastActivity = millis();
+            int8_t prevRoomIndex = prev->roomIndex;
+            freeConnection(client->id());
+            broadcastState(prevRoomIndex, false);
+        } else {
+            freeConnection(client->id());
+        }
+    } else {
+        freeConnection(client->id());
+    }
 
     int8_t roomIndex = findRoomByChannel(channel);
     if (roomIndex < 0) {
@@ -344,8 +365,17 @@ void GameServer::handleJoin(AsyncWebSocketClient *client, JsonObject obj) {
         bool found = false;
         int8_t sx = 1, sy = 1;
         findFreeStartPosition(room, sx, sy, found);
-        p.x = found ? sx : 1;
-        p.y = found ? sy : 1;
+        if (!found) {
+            // 빈 칸을 못 찾았을 때 예전에는 무조건 (1,1)에 놓았는데, 그 자리가 장애물이면
+            // "장애물 안에 갇힌 플레이어"가 생긴다. 그러면 "플레이어는 절대 장애물 위에
+            // 있을 수 없다"는 이 코드 전체의 전제(불변식)가 깨진다.
+            // 자리를 못 찾으면 차라리 참가를 거절하는 쪽이 안전하다.
+            p.active = false; // 방금 잡은 슬롯을 되돌린다 (playerCount는 아직 안 올렸다)
+            sendError(client, "\353\247\265\354\227\220 \353\271\210 \354\236\220\353\246\254\352\260\200 \354\227\206\354\212\265\353\213\210\353\213\244."); // "맵에 빈 자리가 없습니다."
+            return;
+        }
+        p.x = sx;
+        p.y = sy;
         p.direction = Direction::Up;
         p.isTagger = false;
         p.lastSeen = millis();
@@ -442,22 +472,43 @@ void GameServer::handleStartGame(ConnectionInfo &conn) {
         return;
     }
 
+    // 장애물이 게임 중에 계속 변하므로(updateObstacles), 새 판을 시작할 때는 맵을
+    // 원래 모양으로 되돌린다. 이게 없으면 여러 판을 할수록 맵이 점점 변형된 채로 누적된다.
+    initRoomMap(room);
+
     // 모든 플레이어 위치를 임시로 "미배치(-1,-1)" 상태로 만든 뒤 하나씩 빈 칸에 배치한다.
     // 이렇게 해야 새로 배치되는 플레이어가 이미 배치된 다른 플레이어와 겹치지 않는다.
-    for (uint8_t i = 0; i < connectedCount; i++) {
-        Player &p = room.players[connectedIndexes[i]];
+    //
+    // 주의: 반드시 connected가 아니라 active 전체를 돌아야 한다.
+    // 잠깐 연결이 끊긴 플레이어(active && !connected)를 빼먹으면, 그 사람이 이전 판의
+    // isTagger=true를 그대로 들고 있어서 "술래가 2명"인 상태가 만들어진다.
+    int8_t savedX[Config::MAX_PLAYERS_PER_ROOM];
+    int8_t savedY[Config::MAX_PLAYERS_PER_ROOM];
+    for (uint8_t i = 0; i < Config::MAX_PLAYERS_PER_ROOM; i++) {
+        Player &p = room.players[i];
+        if (!p.active) continue;
+        savedX[i] = p.x;
+        savedY[i] = p.y;
         p.x = -1;
         p.y = -1;
         p.direction = Direction::Up;
         p.isTagger = false;
     }
-    for (uint8_t i = 0; i < connectedCount; i++) {
-        Player &p = room.players[connectedIndexes[i]];
+    for (uint8_t i = 0; i < Config::MAX_PLAYERS_PER_ROOM; i++) {
+        Player &p = room.players[i];
+        if (!p.active) continue;
         bool found = false;
         int8_t sx = 1, sy = 1;
         findFreeStartPosition(room, sx, sy, found);
-        p.x = found ? sx : 1;
-        p.y = found ? sy : 1;
+        if (found) {
+            p.x = sx;
+            p.y = sy;
+        } else {
+            // 자리를 못 찾으면 원래 있던 자리에 그대로 둔다.
+            // (-1,-1)로 방치하면 화면에서 사라진 플레이어가 되어버린다.
+            p.x = savedX[i];
+            p.y = savedY[i];
+        }
     }
 
     uint8_t taggerPick = connectedIndexes[esp_random() % connectedCount];
@@ -466,6 +517,9 @@ void GameServer::handleStartGame(ConnectionInfo &conn) {
     room.gameStarted = true;
     room.lastTick = millis();
     room.lastActivity = millis();
+    // 장애물 타이머도 같이 초기화한다. 이게 없으면 이전 판에서 흐른 시간 때문에
+    // 게임을 시작하자마자 장애물이 바뀌어버릴 수 있다.
+    room.lastObstacleUpdate = millis();
 
     Serial.printf("[GAME] 게임 시작: 채널=%s, 술래=%s\n", room.channel, room.players[taggerPick].name);
 
@@ -523,6 +577,39 @@ void GameServer::updateRoomTick(uint8_t roomIndex, unsigned long now) {
         targetX[i] = static_cast<int8_t>(nx);
         targetY[i] = static_cast<int8_t>(ny);
         willMove[i] = true;
+    }
+
+    // 2.5단계: "서로 자리 바꾸기(swap)" 검사.
+    // 마주 보고 다가오는 두 사람은 각자 상대가 "떠날" 칸을 목표로 하므로, 아래 3단계의
+    // 칸 예약만으로는 걸러지지 않는다. 그대로 두면 둘이 서로를 관통해 지나가고,
+    // 특히 술래가 마주 오는 도망자를 잡지 못하고 스쳐 지나가는 심각한 문제가 생긴다.
+    for (uint8_t i = 0; i < Config::MAX_PLAYERS_PER_ROOM; i++) {
+        Player &pi = room.players[i];
+        if (!pi.active || !pi.connected || !willMove[i]) continue;
+
+        for (uint8_t j = i + 1; j < Config::MAX_PLAYERS_PER_ROOM; j++) {
+            Player &pj = room.players[j];
+            if (!pj.active || !pj.connected || !willMove[j]) continue;
+
+            bool swapping = (targetX[i] == pj.x && targetY[i] == pj.y &&
+                             targetX[j] == pi.x && targetY[j] == pi.y);
+            if (!swapping) continue;
+
+            // 술래가 낀 경우: 도망자만 제자리에 세운다. 그러면 술래가 그 칸으로
+            // 들어와서 5단계의 잡기 판정이 정상적으로 일어난다.
+            // (술래에게 정면으로 뛰어들면 잡히는 것이 직관에도 맞는다)
+            if (pi.isTagger) {
+                targetX[j] = pj.x; targetY[j] = pj.y; willMove[j] = false;
+            } else if (pj.isTagger) {
+                targetX[i] = pi.x; targetY[i] = pi.y; willMove[i] = false;
+            } else {
+                // 도망자끼리면 둘 다 제자리에 멈춘다 (서로 부딪혀 튕긴 셈).
+                targetX[i] = pi.x; targetY[i] = pi.y; willMove[i] = false;
+                targetX[j] = pj.x; targetY[j] = pj.y; willMove[j] = false;
+            }
+
+            if (!willMove[i]) break; // i가 멈췄으면 i에 대한 검사는 여기서 끝
+        }
     }
 
     // 3단계: 도망자끼리의 충돌 검사. 배열 인덱스가 빠른 플레이어가 우선권을 가진다.
@@ -618,16 +705,15 @@ void GameServer::updateObstacles(uint8_t roomIndex, unsigned long now) {
         uint8_t ox = obstacles[pick].x;
         uint8_t oy = obstacles[pick].y;
 
-        // 그 칸에 플레이어가 서 있으면 건드리지 않는다.
-        // (참고: 플레이어는 장애물 칸에 있을 수 없으므로 이 검사는 현재 항상 참이다.
-        //  나중에 "장애물 통과 아이템" 같은 것이 생겼을 때를 대비한 방어적 검사로 남겨둔다.)
-        if (!isPositionOccupied(room, static_cast<int8_t>(ox), static_cast<int8_t>(oy))) {
-            room.map[oy][ox] = static_cast<uint8_t>(TileType::Empty);
-            // 배열에서 제거 (마지막 요소와 교체)
-            obstacles[pick] = obstacles[obstacleCount - 1];
-            obstacleCount--;
-            removed++;
-        }
+        // 장애물을 없애는 것은 길을 넓히는 일이라 누구에게도 해가 되지 않으므로 그냥 지운다.
+        // (예전에는 여기서 isPositionOccupied()를 검사했지만, 플레이어는 애초에 장애물 칸에
+        //  들어갈 수 없으므로 항상 참이 되는 죽은 코드였다. 아래 3번의 "배치" 쪽 검사가
+        //  이 불변식을 지켜주는 진짜 검사다.)
+        room.map[oy][ox] = static_cast<uint8_t>(TileType::Empty);
+        // 배열에서 제거 (마지막 요소와 교체 - swap & pop)
+        obstacles[pick] = obstacles[obstacleCount - 1];
+        obstacleCount--;
+        removed++;
     }
 
     // 3. 새로운 장애물 배치 (빈 칸이면서 플레이어가 없는 곳)
@@ -800,23 +886,45 @@ void GameServer::initRoomMap(GameRoom &room) const {
     }
 }
 
+// 빈 칸 하나를 무작위로 골라준다.
+//
+// 예전에는 좌상단부터 훑어서 "처음 만난 빈 칸"을 돌려줬는데, 그러면 게임을 시작할 때
+// 전원이 (1,1), (2,1), (3,1)... 처럼 한 줄로 늘어서서 술래 바로 옆에서 시작하는
+// 사람이 생겨 매우 불공평했다.
+//
+// 빈 칸 목록을 배열에 다 모은 뒤 고르는 방법도 있지만, 여기서는 메모리를 전혀 쓰지 않는
+// "저수지 표본 추출(reservoir sampling)"을 쓴다.
+//   n번째로 발견한 빈 칸을 1/n 확률로 채택 -> 끝까지 훑고 나면 모든 칸이 정확히 같은 확률
+// 한 번만 훑으면서 추가 배열 없이 균등하게 뽑을 수 있는 유명한 기법이다.
 void GameServer::findFreeStartPosition(GameRoom &room, int8_t &outX, int8_t &outY, bool &found) const {
     found = false;
-    for (uint8_t y = 1; y < Config::MAP_HEIGHT - 1 && !found; y++) {
-        for (uint8_t x = 1; x < Config::MAP_WIDTH - 1 && !found; x++) {
+    uint16_t seen = 0;
+
+    for (uint8_t y = 1; y < Config::MAP_HEIGHT - 1; y++) {
+        for (uint8_t x = 1; x < Config::MAP_WIDTH - 1; x++) {
             if (room.map[y][x] != static_cast<uint8_t>(TileType::Empty)) continue;
             if (isPositionOccupied(room, static_cast<int8_t>(x), static_cast<int8_t>(y))) continue;
-            outX = static_cast<int8_t>(x);
-            outY = static_cast<int8_t>(y);
-            found = true;
+
+            seen++;
+            if (esp_random() % seen == 0) { // 1/seen 확률로 교체
+                outX = static_cast<int8_t>(x);
+                outY = static_cast<int8_t>(y);
+                found = true;
+            }
         }
     }
 }
 
+// 그 칸에 플레이어가 서 있는지 검사한다.
+//
+// 주의: connected 여부를 따지지 않고 active인 플레이어를 전부 센다.
+// 잠깐 연결이 끊긴 플레이어(active && !connected)도 맵 위에 그대로 남아 있기 때문에,
+// 그 자리를 "비었다"고 판단하면 그 위에 장애물이 생기거나 다른 사람이 배치되어
+// 재접속했을 때 장애물/다른 플레이어와 겹친 채로 시작하게 된다.
 bool GameServer::isPositionOccupied(const GameRoom &room, int8_t x, int8_t y) const {
     for (uint8_t i = 0; i < Config::MAX_PLAYERS_PER_ROOM; i++) {
         const Player &p = room.players[i];
-        if (p.active && p.connected && p.x == x && p.y == y) {
+        if (p.active && p.x == x && p.y == y) {
             return true;
         }
     }

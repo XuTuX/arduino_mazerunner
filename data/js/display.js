@@ -39,10 +39,24 @@
     draw();
   }, 80);
 
-  function showError(msg) {
+  // 배너에 잠깐 글자를 띄운다.
+  // isError=false면 "사건 알림"(잡혔다, 나갔다)이라 붉은색으로 보이지 않게 한다.
+  // 예전에는 알림도 전부 showError로 띄워서, 정상적인 게임 진행이 오류처럼 보였다.
+  function showBanner(msg, isError) {
     errorBanner.textContent = msg;
+    errorBanner.classList.toggle('banner-notice', !isError);
     errorBanner.hidden = false;
     setTimeout(function () { errorBanner.hidden = true; }, 3000);
+  }
+
+  function showError(msg) { showBanner(msg, true); }
+  function showNotice(msg) { showBanner(msg, false); }
+
+  function findPlayerById(id) {
+    for (var i = 0; i < players.length; i++) {
+      if (players[i].id === id) return players[i];
+    }
+    return null;
   }
 
   function setWsStatus(state) {
@@ -72,9 +86,16 @@
       } else if (msg.type === 'gameStarted') {
         gameStateValue.textContent = '진행 중';
       } else if (msg.type === 'playerCaught') {
-        showError(msg.caughtPlayerName + ' 님이 잡혔습니다! 새 술래: ' + msg.caughtPlayerName);
+        // 서버는 "잡힌 사람"과 "직전 술래"를 따로 알려준다.
+        // 잡은 사람의 이름은 players 목록에서 id로 찾는다 (없으면 이름 없이 표시).
+        var catcher = findPlayerById(msg.previousTaggerPlayerId);
+        if (catcher) {
+          showNotice(catcher.name + ' 님이 ' + msg.caughtPlayerName + ' 님을 잡았습니다! 새 술래: ' + msg.caughtPlayerName);
+        } else {
+          showNotice(msg.caughtPlayerName + ' 님이 잡혔습니다! 새 술래가 되었습니다.');
+        }
       } else if (msg.type === 'playerDisconnected') {
-        showError(msg.name + ' 님의 연결이 끊어졌습니다.');
+        showNotice(msg.name + ' 님의 연결이 끊어졌습니다.');
       } else if (msg.type === 'error') {
         showError(msg.message);
       }
