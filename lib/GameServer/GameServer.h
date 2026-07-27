@@ -42,6 +42,29 @@ private:
     //  두 번 잠그더라도 데드락이 나지 않도록 하기 위함이다)
     SemaphoreHandle_t mutex_;
 
+    // ---- 연결 종료 지연 처리 (데드락 방지) ----
+    //
+    // ESPAsyncWebServer는 클라이언트를 목록에서 지울 때 자기 내부 락(_ws_clients_lock)을
+    // 잡은 상태로 소멸자를 부르고, 그 소멸자가 WS_EVT_DISCONNECT를 발생시킨다.
+    // 즉 우리 콜백이 "라이브러리 락을 잡은 채" 실행된다.
+    //
+    // 그런데 우리 loop()는 반대로 mutex_를 잡은 채 broadcastState -> ws_.client()를
+    // 호출하고, ws_.client()는 그 라이브러리 락을 요구한다. 락을 잡는 순서가 서로
+    // 반대라서(락 순서 역전) 다음 상황에서 양쪽이 영원히 멈춘다.
+    //
+    //   메인 태스크 : mutex_ 보유       -> _ws_clients_lock 대기
+    //   AsyncTCP    : _ws_clients_lock 보유 -> mutex_ 대기        => 데드락
+    //
+    // 그래서 WS_EVT_DISCONNECT에서는 clientId만 이 대기열에 적어두고 즉시 빠져나온다.
+    // 실제 처리는 loop()에서(=라이브러리 락을 안 잡은 상태에서) 한다.
+    // 이렇게 하면 락을 잡는 순서가 항상 "mutex_ -> 라이브러리 락" 하나로 통일된다.
+    uint32_t pendingDisconnects_[Config::MAX_CONNECTIONS];
+    uint8_t pendingDisconnectCount_;
+    portMUX_TYPE pendingLock_;
+
+    void queueDisconnect(uint32_t clientId);
+    void drainPendingDisconnects();
+
     unsigned long lastCleanupTime_;
 
     // ---- WebSocket 이벤트 처리 ----

@@ -32,7 +32,45 @@ static const uint8_t kDefaultMap[Config::MAP_HEIGHT][Config::MAP_WIDTH] = {
 };
 
 GameServer::GameServer()
-    : ws_("/ws"), mutex_(nullptr), lastCleanupTime_(0) {
+    : ws_("/ws"), mutex_(nullptr), pendingDisconnectCount_(0), lastCleanupTime_(0) {
+    pendingLock_ = portMUX_INITIALIZER_UNLOCKED;
+}
+
+// =====================================================================
+// 연결 종료 대기열 (자세한 이유는 GameServer.h의 pendingDisconnects_ 주석 참고)
+//
+// 이 두 함수는 게임 상태(rooms_, connections_)를 건드리지 않고 작은 배열만
+// 만지므로, 무거운 mutex_ 대신 아주 짧은 스핀락(portMUX)으로 보호한다.
+// 스핀락 구간에서는 절대 다른 락을 잡거나 오래 걸리는 일을 하면 안 된다.
+// =====================================================================
+void GameServer::queueDisconnect(uint32_t clientId) {
+    portENTER_CRITICAL(&pendingLock_);
+    if (pendingDisconnectCount_ < Config::MAX_CONNECTIONS) {
+        pendingDisconnects_[pendingDisconnectCount_++] = clientId;
+    }
+    portEXIT_CRITICAL(&pendingLock_);
+}
+
+void GameServer::drainPendingDisconnects() {
+    while (true) {
+        uint32_t clientId = 0;
+        bool has = false;
+
+        portENTER_CRITICAL(&pendingLock_);
+        if (pendingDisconnectCount_ > 0) {
+            clientId = pendingDisconnects_[0];
+            // 맨 앞을 꺼냈으므로 나머지를 한 칸씩 당긴다 (최대 48개라 비용은 무시할 만하다).
+            for (uint8_t i = 1; i < pendingDisconnectCount_; i++) {
+                pendingDisconnects_[i - 1] = pendingDisconnects_[i];
+            }
+            pendingDisconnectCount_--;
+            has = true;
+        }
+        portEXIT_CRITICAL(&pendingLock_);
+
+        if (!has) break;
+        handleDisconnect(clientId); // 여기서 mutex_를 잡는다 (라이브러리 락은 안 잡은 상태)
+    }
 }
 
 // =====================================================================
@@ -64,6 +102,10 @@ void GameServer::begin(AsyncWebServer &server) {
 // =====================================================================
 void GameServer::loop() {
     unsigned long now = millis();
+
+    // WebSocket 콜백에서 미뤄둔 연결 종료를 여기서 처리한다.
+    // (라이브러리 락을 안 잡은 지금이 안전한 시점이다)
+    drainPendingDisconnects();
 
     xSemaphoreTakeRecursive(mutex_, portMAX_DELAY);
 
@@ -106,7 +148,11 @@ void GameServer::onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
 
         case WS_EVT_DISCONNECT:
             Serial.printf("[WS] 클라이언트 연결 종료 (id=%u)\n", client->id());
-            handleDisconnect(client->id());
+            // 여기서 바로 handleDisconnect()를 부르면 안 된다.
+            // 이 콜백은 라이브러리가 자기 락을 잡은 채 부르기 때문에, mutex_를 잡으려 하면
+            // 락 순서 역전으로 데드락이 날 수 있다 (GameServer.h의 pendingDisconnects_ 참고).
+            // 그래서 id만 적어두고, 실제 처리는 loop()에 맡긴다.
+            queueDisconnect(client->id());
             break;
 
         case WS_EVT_DATA: {
@@ -298,6 +344,18 @@ void GameServer::handleJoin(AsyncWebSocketClient *client, JsonObject obj) {
     const char *nameRaw = obj["name"] | "";
     const char *tokenRaw = obj["token"] | "";
 
+    // 게임 상태를 건드리기 전에 연결 슬롯부터 확보한다.
+    // 예전에는 플레이어를 다 만들어놓고 마지막에 allocConnection()을 했는데, 그게 실패하면
+    // "연결 정보가 없는데 connected=true인 플레이어"가 남았다. 그런 플레이어는
+    // handleDisconnect()가 찾지 못하고(findConnection이 nullptr), cleanupRooms()도
+    // !connected만 지우므로 영원히 슬롯을 차지하는 유령이 된다.
+    // 자원은 상태를 바꾸기 "전에" 확보하는 것이 원칙이다.
+    ConnectionInfo *conn = allocConnection(client->id());
+    if (conn == nullptr) {
+        sendError(client, "\354\204\234\353\262\204 \354\227\260\352\262\260 \354\236\220\354\233\220\354\235\264 \353\266\200\354\241\261\355\225\251\353\213\210\353\213\244."); // "서버 연결 자원이 부족합니다."
+        return;
+    }
+
     // 토큰이 유효하면(=같은 브라우저의 재접속/새로고침) 기존 플레이어로 복귀시킨다.
     int8_t existingIndex = -1;
     if (strlen(tokenRaw) > 0) {
@@ -329,7 +387,10 @@ void GameServer::handleJoin(AsyncWebSocketClient *client, JsonObject obj) {
         p.lastSeen = millis();
         Serial.printf("[GAME] 플레이어 재연결: 채널=%s, 이름=%s\n", channel, p.name);
     } else {
+        // 새 플레이어를 만들기 전에, 실패할 수 있는 조건을 "전부 먼저" 확인한다.
+        // 이렇게 검사와 생성을 분리하면 중간에 실패해서 되돌리는 코드가 필요 없다.
         if (room.playerCount >= Config::MAX_PLAYERS_PER_ROOM) {
+            freeConnection(client->id()); // 위에서 확보한 슬롯 반납
             sendError(client, "채널의 플레이어 정원(8명)이 가득 찼습니다.");
             return;
         }
@@ -342,10 +403,24 @@ void GameServer::handleJoin(AsyncWebSocketClient *client, JsonObject obj) {
             }
         }
         if (playerIndex < 0) {
+            freeConnection(client->id());
             sendError(client, "빈 플레이어 슬롯을 찾을 수 없습니다.");
             return;
         }
 
+        // 시작 위치도 "만들기 전에" 확인한다.
+        // 예전에는 플레이어를 만든 뒤에 자리를 찾고, 못 찾으면 무조건 (1,1)에 놓았다.
+        // 그 자리가 장애물이면 "플레이어는 장애물 위에 있을 수 없다"는 불변식이 깨진다.
+        bool found = false;
+        int8_t sx = 1, sy = 1;
+        findFreeStartPosition(room, sx, sy, found);
+        if (!found) {
+            freeConnection(client->id());
+            sendError(client, "\353\247\265\354\227\220 \353\271\210 \354\236\220\353\246\254\352\260\200 \354\227\206\354\212\265\353\213\210\353\213\244."); // "맵에 빈 자리가 없습니다."
+            return;
+        }
+
+        // 여기서부터는 더 이상 실패하지 않는다. 실제 생성 시작.
         Player &p = room.players[playerIndex];
         memset(&p, 0, sizeof(Player));
         p.active = true;
@@ -362,18 +437,6 @@ void GameServer::handleJoin(AsyncWebSocketClient *client, JsonObject obj) {
         strncpy(p.name, safeName, sizeof(p.name) - 1);
         p.name[sizeof(p.name) - 1] = '\0';
 
-        bool found = false;
-        int8_t sx = 1, sy = 1;
-        findFreeStartPosition(room, sx, sy, found);
-        if (!found) {
-            // 빈 칸을 못 찾았을 때 예전에는 무조건 (1,1)에 놓았는데, 그 자리가 장애물이면
-            // "장애물 안에 갇힌 플레이어"가 생긴다. 그러면 "플레이어는 절대 장애물 위에
-            // 있을 수 없다"는 이 코드 전체의 전제(불변식)가 깨진다.
-            // 자리를 못 찾으면 차라리 참가를 거절하는 쪽이 안전하다.
-            p.active = false; // 방금 잡은 슬롯을 되돌린다 (playerCount는 아직 안 올렸다)
-            sendError(client, "\353\247\265\354\227\220 \353\271\210 \354\236\220\353\246\254\352\260\200 \354\227\206\354\212\265\353\213\210\353\213\244."); // "맵에 빈 자리가 없습니다."
-            return;
-        }
         p.x = sx;
         p.y = sy;
         p.direction = Direction::Up;
@@ -386,11 +449,7 @@ void GameServer::handleJoin(AsyncWebSocketClient *client, JsonObject obj) {
                       channel, p.name, p.x, p.y);
     }
 
-    ConnectionInfo *conn = allocConnection(client->id());
-    if (conn == nullptr) {
-        sendError(client, "서버 연결 자원이 부족합니다. 잠시 후 다시 시도해주세요.");
-        return;
-    }
+    // 연결 슬롯은 이 함수 앞부분에서 이미 확보해뒀다. 이제 소속만 채워준다.
     conn->isDisplay = false;
     conn->roomIndex = roomIndex;
     conn->playerIndex = playerIndex;
